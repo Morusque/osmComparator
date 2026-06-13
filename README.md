@@ -30,6 +30,11 @@ for you automatically.
    - You can also **drag-and-drop a `.osm` onto either map pane** to load it
      ad-hoc for the session (parsed in the browser).
 
+   - Or **drop one or more `.osm` files onto `drop-osm-here.bat`** (Windows):
+     it copies them into `maps/` (overwriting same-named maps = an update)
+     and rebuilds `data/`. Double-clicking it with nothing dropped just
+     rebuilds.
+
    <details><summary>Manual / offline alternatives</summary>
 
    - `python prepare.py` — convert all of `maps/` once, by hand (same build
@@ -40,7 +45,27 @@ for you automatically.
      single file from anywhere and add it to the set.
    </details>
 
-2. **Use the comparator.**
+2. **(Optional) Pull a map straight from OpenGeofiction** — bigger than the
+   website's 50,000-element export limit:
+
+   ```
+   python fetch.py "f vigeoule" 54.23 47.46 54.58 47.63 --save
+   ```
+
+   This queries OGF's Overpass API for everything in the bounding box
+   (`minlon minlat maxlon maxlat` = left bottom right top — copy the numbers
+   from the site's Export tab and widen them to taste) and writes
+   `maps/<name>.osm`. `--save` records it in `regions.json`; then
+   `python fetch.py` with no arguments **refreshes every saved region** from
+   the live server. After fetching, just reload the browser.
+
+   > Overpass on OGF is a shared, somewhat experimental service — fetch the
+   > area you need, don't loop it tightly, and prefer this over scraping the
+   > plain API. For the *entire* world or many extracts at once, download a
+   > planet dump from <https://data.opengeofiction.net/backups>
+   > (`ogf-planet.osm.pbf`, ~1.3 GB) and clip regions with `osmium extract`.
+
+3. **Use the comparator.**
 
    - Left/right panes each pick a map + a visual analysis.
    - Drag = pan, wheel = zoom, double-click = fit, hover = inspect tags.
@@ -97,6 +122,9 @@ for you automatically.
 | path | role |
 |---|---|
 | `maps/` | **drop your `.osm` files here** — the source of truth |
+| `drop-osm-here.bat` | Windows: drag `.osm` files onto it to copy into `maps/` + rebuild |
+| `fetch.py` | pull a region from OGF's Overpass API into `maps/` (beats the export cap) |
+| `regions.json` | saved name→bbox regions for `python fetch.py` to refresh |
 | `serve.py` | dev server; auto-rebuilds `data/` from `maps/` on reload |
 | `prepare.py` | the build step itself: `maps/*.osm` → compact `data/*.data.js` (projects to local meters, precomputes length/area) |
 | `data/` | compiled cache the browser loads; regenerated from `maps/`, safe to delete |

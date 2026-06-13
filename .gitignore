@@ -1,0 +1,11 @@
+# Python bytecode cache
+__pycache__/
+*.pyc
+
+# Claude Code local tooling / settings
+.claude/
+
+# Real-world map extracts and their compiled data are kept local only;
+# for licensing reasons just the fictional ("f *") maps are committed.
+maps/r *.osm
+data/r-*.data.js
