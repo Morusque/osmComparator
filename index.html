@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>OSM map comparator</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #0e0f12; color: #ddd;
+         font: 13px/1.4 system-ui, sans-serif;
+         display: flex; flex-direction: column; height: 100vh; }
+  header { display: flex; align-items: center; gap: 10px; padding: 6px 12px;
+           background: #1a1c22; border-bottom: 1px solid #2a2d36; flex-wrap: wrap; }
+  header h1 { font-size: 14px; margin: 0 12px 0 0; font-weight: 600; color: #9bb0d0; }
+  button, select, input { background: #262932; color: #ddd; border: 1px solid #3a3e4a;
+           border-radius: 4px; padding: 4px 9px; font: inherit; cursor: pointer; }
+  button:hover { background: #323644; }
+  input { width: 130px; cursor: text; }
+  main { flex: 1; display: flex; min-height: 0; }
+  .pane { flex: 1; display: flex; flex-direction: column; min-width: 0;
+          border-right: 1px solid #2a2d36; position: relative; }
+  .pane:last-child { border-right: none; }
+  .pane .bar { display: flex; gap: 6px; padding: 5px 8px; background: #16181d; }
+  .pane select { max-width: 46%; }
+  .canvas-wrap { flex: 1; position: relative; min-height: 0; }
+  canvas { width: 100%; height: 100%; display: block; cursor: grab; }
+  canvas:active { cursor: grabbing; }
+  .status { padding: 3px 8px; background: #16181d; color: #8a92a3; font-size: 11px;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tooltip { display: none; position: absolute; pointer-events: none; z-index: 10;
+             background: rgba(18,20,26,.94); border: 1px solid #3a3e4a; border-radius: 5px;
+             padding: 6px 9px; max-width: 240px; font-size: 11.5px; word-break: break-all; }
+  #panel { display: none; max-height: 45vh; overflow: auto; padding: 10px 14px;
+           background: #14161b; border-top: 1px solid #2a2d36; }
+  #panel table { border-collapse: collapse; font-size: 12px; }
+  #panel th, #panel td { padding: 3px 10px; border-bottom: 1px solid #23262e; text-align: right; }
+  #panel th { color: #9bb0d0; position: sticky; top: -10px; background: #14161b; }
+  #panel td:first-child, #panel th:first-child { text-align: left; white-space: pre; }
+  #panel tr.warn td { color: #e8c860; }
+  #panel tr.bad td { color: #f08080; }
+  #panel .note { color: #8a92a3; font-size: 11px; max-width: 90ch; }
+  #panel .clickable { cursor: pointer; text-decoration: underline dotted; }
+  #panel th.sortable { cursor: pointer; user-select: none; }
+  #panel th.sortable:hover { color: #d6e2f5; }
+  .hint { color: #6b7280; font-size: 11px; margin-left: auto; }
+  .fieldgrp { display: inline-flex; align-items: center; gap: 4px;
+              background: #1f2229; border: 1px solid #2a2d36; border-radius: 5px; padding: 2px 4px 2px 7px; }
+  .fieldgrp label { color: #9bb0d0; font-size: 11px; }
+  .fieldgrp input { width: 130px; }
+  #filter-input { width: 150px; }
+  .canvas-wrap.drag { outline: 3px dashed #60a5fa; outline-offset: -6px; }
+  /* histogram */
+  .hist { max-width: 640px; }
+  .hrow { display: flex; align-items: center; gap: 8px; margin: 1px 0; }
+  .hlbl { width: 120px; text-align: right; color: #8a92a3; font-size: 11px; flex: none; }
+  .hbars { flex: 1; line-height: 0; }
+  .hbar { display: inline-block; height: 6px; border-radius: 2px; margin: 1px 0; }
+  .hA, .swA { background: #60a5fa; }
+  .hB, .swB { background: #fb923c; }
+  .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; vertical-align: -1px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Map evaluator</h1>
+  <button id="btn-compare">Compare</button>
+  <button id="btn-areas">Area breakdown</button>
+  <button id="btn-hist">Building sizes</button>
+  <button id="btn-keys">Top tag keys</button>
+  <span class="fieldgrp" title="Type a KEY only (one word, no =). Shows every VALUE that key takes in both maps.">
+    <label>explore key</label>
+    <input id="tag-key" placeholder="building" >
+    <button id="btn-explore">→ values</button>
+  </span>
+  <span class="fieldgrp" title="A KEY (shop = any shop) or KEY=VALUE (building=residential), or VALUE1|VALUE2. Drives the Highlight and Density modes.">
+    <label>filter</label>
+    <input id="filter-input" placeholder="building=residential">
+  </span>
+  <button id="btn-match-scale">Match right scale to left</button>
+  <button id="btn-close-panel">Hide panel</button>
+  <span class="hint">drag = pan · wheel = zoom · double-click = fit · hover = inspect · drop an .osm onto a map to load it</span>
+</header>
+<main>
+  <div class="pane" id="pane-left">
+    <div class="bar">
+      <select class="ds-select"></select>
+      <select class="an-select"></select>
+    </div>
+    <div class="canvas-wrap"><canvas></canvas><div class="tooltip"></div></div>
+    <div class="status"></div>
+  </div>
+  <div class="pane" id="pane-right">
+    <div class="bar">
+      <select class="ds-select"></select>
+      <select class="an-select"></select>
+    </div>
+    <div class="canvas-wrap"><canvas></canvas><div class="tooltip"></div></div>
+    <div class="status"></div>
+  </div>
+</main>
+<div id="panel"></div>
+
+<script>
+  // Everything is loaded with a cache-buster so a plain reload always picks
+  // up the latest build and your edits (browsers otherwise cache .js hard).
+  var _v = '?t=' + Date.now();
+  document.write('<script src="data/manifest.js' + _v + '"><\/script>');
+</script>
+<script>
+  // load every dataset listed in the (now fresh) manifest
+  for (const f of (window.OSM_DATA_FILES || []))
+    document.write('<script src="data/' + f + _v + '"><\/script>');
+  document.write('<script src="analyses.js' + _v + '"><\/script>');
+  document.write('<script src="viewer.js' + _v + '"><\/script>');
+</script>
+</body>
+</html>
