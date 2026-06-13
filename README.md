@@ -65,6 +65,21 @@ for you automatically.
    > planet dump from <https://data.opengeofiction.net/backups>
    > (`ogf-planet.osm.pbf`, ~1.3 GB) and clip regions with `osmium extract`.
 
+   **Refresh every map at once** with `update-all.bat` (or `python update.py`):
+   it re-fetches each map in `maps/` at its current extent from the right
+   server, chosen by filename prefix — **`f …` → OpenGeofiction (fictional),
+   `r …` → OpenStreetMap (real)** — then rebuilds `data/`. The routing is
+   printed so it's clear what came from where, and there's a polite delay
+   between calls. (`python update.py --dry-run` shows the routing without
+   fetching.) Real-OSM areas can be large, so this may take a while.
+
+   **Enlarge one map** with `extend.py` — re-fetches a single map over a
+   bigger box (same source, by prefix):
+   ```
+   python extend.py "f vigeoule" --margin 0.05          # grow 0.05° each side
+   python extend.py "f vigeoule" --bbox 54.10 47.30 54.70 47.80
+   ```
+
 3. **Use the comparator.**
 
    - Left/right panes each pick a map + a visual analysis.
@@ -123,7 +138,9 @@ for you automatically.
 |---|---|
 | `maps/` | **drop your `.osm` files here** — the source of truth |
 | `drop-osm-here.bat` | Windows: drag `.osm` files onto it to copy into `maps/` + rebuild |
-| `fetch.py` | pull a region from OGF's Overpass API into `maps/` (beats the export cap) |
+| `fetch.py` | pull a region from OGF/OSM Overpass into `maps/` (beats the export cap) |
+| `update-all.bat` / `update.py` | refresh every map in `maps/` from its source (by `f `/`r ` prefix) |
+| `extend.py` | one-shot: enlarge a single map's area and re-fetch it |
 | `regions.json` | saved name→bbox regions for `python fetch.py` to refresh |
 | `serve.py` | dev server; auto-rebuilds `data/` from `maps/` on reload |
 | `prepare.py` | the build step itself: `maps/*.osm` → compact `data/*.data.js` (projects to local meters, precomputes length/area) |

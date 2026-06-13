@@ -33,10 +33,39 @@ import sys
 import urllib.parse
 import urllib.request
 
-ENDPOINT = "https://overpass.opengeofiction.net/api/interpreter"
+OGF_ENDPOINT = "https://overpass.opengeofiction.net/api/interpreter"
+OSM_ENDPOINT = "https://overpass-api.de/api/interpreter"
+ENDPOINT = OGF_ENDPOINT  # default for the single-region CLI at the bottom
 REGIONS = "regions.json"
 MAPS_DIR = "maps"
 UA = "ogf-map-comparator/1.0 (personal map comparison tool)"
+
+
+def route(name):
+    """Choose a source server from the filename prefix:
+       'f ...' -> OpenGeofiction (fictional), 'r ...' -> OpenStreetMap (real).
+    Returns (label, endpoint) or None if the prefix is missing."""
+    if name.startswith("f "):
+        return ("OpenGeofiction (fictional)", OGF_ENDPOINT)
+    if name.startswith("r "):
+        return ("OpenStreetMap (real)", OSM_ENDPOINT)
+    return None
+
+
+def read_bounds(path):
+    """Read the <bounds> bbox as (minlon, minlat, maxlon, maxlat) = (w,s,e,n)
+    from a .osm file. Exports and fetch_region both write one near the top."""
+    with open(path, encoding="utf-8") as f:
+        head = f.read(8192)
+    tag = re.search(r"<bounds\b[^>]*>", head)
+    if not tag:
+        return None
+    attrs = dict(re.findall(r'(\w+)="([-\d.]+)"', tag.group(0)))
+    try:
+        return (float(attrs["minlon"]), float(attrs["minlat"]),
+                float(attrs["maxlon"]), float(attrs["maxlat"]))
+    except KeyError:
+        return None
 
 
 def overpass_query(w, s, e, n, timeout):
@@ -49,11 +78,12 @@ def overpass_query(w, s, e, n, timeout):
             f"(._;>;);\nout meta;")
 
 
-def fetch_region(name, w, s, e, n, timeout=180):
-    print(f"Fetching '{name}'  bbox=({w},{s},{e},{n}) ...")
+def fetch_region(name, w, s, e, n, timeout=180, endpoint=OGF_ENDPOINT):
+    host = urllib.parse.urlparse(endpoint).netloc
+    print(f"Fetching '{name}'  bbox=({w},{s},{e},{n})  from {host} ...")
     query = overpass_query(w, s, e, n, timeout)
     data = urllib.parse.urlencode({"data": query}).encode()
-    req = urllib.request.Request(ENDPOINT, data=data, headers={"User-Agent": UA})
+    req = urllib.request.Request(endpoint, data=data, headers={"User-Agent": UA})
     try:
         with urllib.request.urlopen(req, timeout=timeout + 60) as resp:
             xml = resp.read().decode("utf-8", "replace")
