@@ -111,6 +111,131 @@ ANALYSES.building_area = {
   },
 };
 
+// --- Floors -------------------------------------------------------------
+// How tall the town is: each building coloured by its number of floors, one
+// colour a floor (8 and over share one), the number written in the middle
+// once the building is big enough on screen. Floors from building:levels,
+// else from height (3 m a floor, rounded). A building that says neither
+// is drawn in its own colour, NO_FLOORS, with mapBatcher's estimate written
+// as "~n" in italics -- the figure the audit offers to write down: the model
+// fitted on the real towns (mapBatcher/levels_observed.json): 3.05 + 1.77 x
+// the built share within 50 m, 1.26 fewer for a house, 0.63 more facing a
+// square, one storey for a shed; pulled toward what the buildings you
+// tagged round it say (most of the way next door, a quarter at 50 m).
+// Kept in step with mapBatcher/heights.py (`estimate`, levels_observed.json),
+// which the audit's floors fixes use: change one, change the other.
+const FLOORS_MODEL = { base: 3.05, perBuilt: 1.77, house: -1.26, square: 0.63, radius: 50,
+  squareM: 20, houseKinds: ["house", "detached", "semidetached_house", "bungalow",
+  "terrace", "farm", "cabin"],
+  outbuildings: ["garage", "garages", "shed", "carport", "hut", "kiosk", "greenhouse",
+    "toilets", "service", "transformer_tower"],
+  noFloors: ["roof", "construction", "ruins", "no", "collapsed", "bridge"],
+  // the buildings you tagged pull the others: weight exp(-(d / sigma)^2) out
+  // to reach, against `prior` for the model
+  pullSigma: 30, pullReach: 90, pullPrior: 0.2 };
+const NO_FLOORS = "#d946ef";
+function floorsOf(t) {
+  if (t["building:levels"]) {
+    const told = parseFloat(String(t["building:levels"]).split(";")[0].replace(",", "."));
+    if (told > 0 && told < 60) return told;
+  }
+  if (t.height) {
+    const h = parseFloat(String(t.height).toLowerCase().replace("m", "").replace(",", ".").trim());
+    if (h >= 2 && h <= 60) return Math.max(1, Math.round(h / 3));
+  }
+  return null;
+}
+function floorColor(n) { return heat(Math.min(8, Math.max(1, Math.round(n))), 1, 8); }
+ANALYSES.floors = {
+  label: "Floors (magenta: no tag, ~estimate)",
+  // a getter: heat() is defined in viewer.js, loaded after this file
+  get legend() {
+    return { steps: [1, 2, 3, 4, 5, 6, 7, 8].map((n) => ({ label: n === 8 ? "8+" : String(n), color: floorColor(n) }))
+      .concat([{ label: "none", color: NO_FLOORS }]) };
+  },
+  prepare(ds) {
+    // as heights.estimate does: the model from the built share within 50 m
+    // (the area of the buildings whose centre is in the disc), a house
+    // lower, a square higher, a shed one storey; then pulled toward what
+    // the tagged buildings round it say
+    const M = FLOORS_MODEL, cell = M.radius;
+    const grid = new Map(), squares = [], all = [];
+    const key = (x, y) => Math.floor(x / cell) + "_" + Math.floor(y / cell);
+    for (const f of ds.features) {
+      if (f.kind !== "way" || !f.closed) continue;
+      if (f.t.building && !M.noFloors.includes(f.t.building)) {
+        const k = key(f.lx, f.ly);
+        if (!grid.has(k)) grid.set(k, []);
+        grid.get(k).push(f);
+        all.push(f);
+      } else if (f.t.place === "square" || (f.t.highway === "pedestrian"
+                 && (f.t.area === "yes" || f.t["area:highway"]))) {
+        squares.push(f);
+      }
+    }
+    const near = (f, reach, fn) => {
+      const cx = Math.floor(f.lx / cell), cy = Math.floor(f.ly / cell), span = Math.ceil(reach / cell);
+      for (let i = -span; i <= span; i++) for (let j = -span; j <= span; j++) {
+        for (const o of grid.get((cx + i) + "_" + (cy + j)) || []) {
+          const d = Math.hypot(o.lx - f.lx, o.ly - f.ly);
+          if (d <= reach) fn(o, d);
+        }
+      }
+    };
+    const disc = Math.PI * M.radius * M.radius;
+    for (const f of all) {
+      f._floorsTold = floorsOf(f.t);
+      if (M.outbuildings.includes(f.t.building)) { f._floorsBase = 1; continue; }
+      let built = 0;
+      near(f, M.radius, (o) => { built += o.area || 0; });
+      const share = Math.min(1, built / disc);
+      const house = M.houseKinds.includes(f.t.building);
+      const reach = M.squareM + Math.sqrt((f.area || 0) / Math.PI);
+      const square = squares.some(q => Math.hypot(q.lx - f.lx, q.ly - f.ly) <= reach + Math.sqrt((q.area || 0) / Math.PI));
+      f._floorsBase = Math.max(1, M.base + M.perBuilt * share + (house ? M.house : 0) + (square ? M.square : 0));
+    }
+    for (const f of all) {
+      if (f._floorsTold !== null) continue;
+      if (M.outbuildings.includes(f.t.building)) { f._floorsEst = 1; continue; }
+      let num = 0, den = M.pullPrior;
+      near(f, M.pullReach, (o, d) => {
+        if (o._floorsTold === null || M.outbuildings.includes(o.t.building)) return;
+        const w = Math.exp(-((d / M.pullSigma) ** 2));
+        num += w * (o._floorsTold - o._floorsBase);
+        den += w;
+      });
+      f._floorsEst = Math.max(1, f._floorsBase + num / den);
+    }
+  },
+  style(f) {
+    if (f.kind !== "way" || !f.t.building) return dimContext(f);
+    if (!f.closed) return null;
+    const n = floorsOf(f.t);
+    if (n !== null) {
+      return { fill: floorColor(n), stroke: "#222", width: 0.3, z: 4,
+        label: Number.isInteger(n) ? n : n.toFixed(1) };
+    }
+    return { fill: NO_FLOORS, stroke: "#222", width: 0.3, z: 4,
+      label: f._floorsEst ? "~" + Math.round(f._floorsEst) : null, labelItalic: true };
+  },
+};
+
+// --- Floors, the estimates coloured ------------------------------------
+// The same, but a building that says nothing takes its estimate's colour,
+// paler and outlined in NO_FLOORS -- to see the town as the model reads it.
+ANALYSES.floors_estimated = {
+  label: "Floors (estimates coloured, pale)",
+  get legend() { return ANALYSES.floors.legend; },
+  prepare(ds) { ANALYSES.floors.prepare(ds); },
+  style(f) {
+    const st = ANALYSES.floors.style(f);
+    if (!st || st.fill !== NO_FLOORS || !f._floorsEst) return st;
+    const c = floorColor(f._floorsEst);
+    return Object.assign({}, st, { fill: c.replace("hsl(", "hsla(").replace(")", ",0.55)"),
+      stroke: NO_FLOORS, width: 0.8 });
+  },
+};
+
 // --- Building type ------------------------------------------------------
 // Are buildings actually typed (house/apartments/garage/church...) or all
 // just building=yes? Compare the color diversity of the two maps.
@@ -257,6 +382,9 @@ const tagEq = (k, v) => (f) => f.t[k] === v;
 const tagAny = (k) => (f) => f.t[k] !== undefined;
 
 // — Everyday amenities a populated area tends to have —
+// — How tall: buildings that say how many floors they have —
+M("Buildings with floors (levels or height)", (f) => !!f.t.building && floorsOf(f.t) !== null);
+
 M("Restaurants", tagEq("amenity", "restaurant"));
 M("Cafés", tagEq("amenity", "cafe"));
 M("Bars / pubs", (f) => f.t.amenity === "bar" || f.t.amenity === "pub");

@@ -82,9 +82,20 @@ function processDataset(raw) {
       if (xy[i + 1] < miny) miny = xy[i + 1]; if (xy[i + 1] > maxy) maxy = xy[i + 1];
     }
     if (w.closed) path.closePath();
+    // where a label goes: the polygon's centroid (its bbox centre for lines)
+    let lx = (minx + maxx) / 2, ly = (miny + maxy) / 2;
+    if (w.closed && xy.length >= 6) {
+      let a2 = 0, sx = 0, sy = 0;
+      for (let i = 0; i < xy.length; i += 2) {
+        const j = (i + 2) % xy.length;
+        const c = xy[i] * xy[j + 1] - xy[j] * xy[i + 1];
+        a2 += c; sx += (xy[i] + xy[j]) * c; sy += (xy[i + 1] + xy[j + 1]) * c;
+      }
+      if (Math.abs(a2) > 1e-9) { lx = sx / (3 * a2); ly = sy / (3 * a2); }
+    }
     features.push({ kind: "way", t: w.t, len: w.len, area: w.area,
       closed: !!w.closed, path, bbox: [minx, miny, maxx, maxy],
-      cx: (minx + maxx) / 2, cy: (miny + maxy) / 2 });
+      cx: (minx + maxx) / 2, cy: (miny + maxy) / 2, lx, ly });
   }
   for (const p of raw.points)
     features.push({ kind: "point", t: p.t, x: p.x, y: p.y });
@@ -304,6 +315,14 @@ class MapView {
     if (!this.ds) return;
 
     const analysis = ANALYSES[this.analysisKey];
+    // an analysis may work something out once per dataset (prepare(ds))
+    if (analysis.prepare) {
+      this.ds._prepared = this.ds._prepared || {};
+      if (!this.ds._prepared[this.analysisKey]) {
+        analysis.prepare(this.ds);
+        this.ds._prepared[this.analysisKey] = true;
+      }
+    }
     const s = this.view.scale;
     // visible world rect (with margin)
     const [wx1, wy2] = this.s2w(-50, -50);
@@ -312,6 +331,7 @@ class MapView {
     // bucket by z
     const buckets = [];
     const pts = [];
+    const labels = [];
     let drawn = 0;
     for (const f of this.ds.features) {
       if (f.kind === "relation") continue;
@@ -325,6 +345,7 @@ class MapView {
       const z = st.z || 0;
       if (f.kind === "point") pts.push([f, st, z]);
       else (buckets[z] = buckets[z] || []).push([f, st]);
+      if (st.label != null && f.kind === "way") labels.push([f, st]);
     }
 
     this._applyTransform();
@@ -350,6 +371,18 @@ class MapView {
       ctx.arc(px, py, st.r || 2, 0, Math.PI * 2);
       ctx.fill();
     }
+    // labels (style's `label`) at each way's centroid, once the way is
+    // big enough on screen to hold one
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    for (const [f, st] of labels) {
+      const side = Math.min(f.bbox[2] - f.bbox[0], f.bbox[3] - f.bbox[1]) * s;
+      if (side < 12) continue;
+      const [px, py] = this.w2s(f.lx, f.ly);
+      ctx.font = `${st.labelItalic ? "italic " : ""}${Math.round(Math.min(14, Math.max(9, side * 0.4)))}px sans-serif`;
+      ctx.fillStyle = st.labelColor || "#111";
+      ctx.fillText(String(st.label), px, py);
+    }
+    ctx.textAlign = "start"; ctx.textBaseline = "alphabetic";
 
     if (analysis.overlay) analysis.overlay(this);
 
@@ -381,6 +414,24 @@ class MapView {
     if (!legend) return;
     const ctx = this.ctx, dpr = window.devicePixelRatio || 1;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    if (legend.steps) {
+      // discrete: one swatch per step, its label under it
+      const sw = 22, gap = 3, n = legend.steps.length;
+      const width = n * sw + (n - 1) * gap;
+      const x0 = this.canvas.clientWidth - width - 12, y0 = 12;
+      ctx.fillStyle = "rgba(20,22,28,.8)";
+      ctx.fillRect(x0 - 6, y0 - 4, width + 12, 34);
+      ctx.font = "10px sans-serif"; ctx.textAlign = "center";
+      legend.steps.forEach((st, i) => {
+        const x = x0 + i * (sw + gap);
+        ctx.fillStyle = st.color;
+        ctx.fillRect(x, y0, sw, 10);
+        ctx.fillStyle = "#ddd";
+        ctx.fillText(st.label, x + sw / 2, y0 + 22);
+      });
+      ctx.textAlign = "start";
+      return;
+    }
     const w = 140, x = this.canvas.clientWidth - w - 12, y = 12;
     ctx.fillStyle = "rgba(20,22,28,.8)";
     ctx.fillRect(x - 6, y - 4, w + 12, 34);
